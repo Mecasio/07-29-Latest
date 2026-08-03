@@ -43,6 +43,12 @@ import {
   syncRegistrarScopeFromAdminData,
 } from "../utils/registrarCurriculumRestriction";
 import useRegistrarScopeRevision from "../hooks/useRegistrarScopeRevision";
+import {
+  computeTotalAssessment,
+  computeTuitionAmount,
+  fetchResolvedFees,
+  toNumber as toFeeNumber,
+} from "../utils/corDynamicFees";
 
 const CertificateOfRegistrationForCollege = forwardRef(
   (
@@ -930,6 +936,85 @@ const CertificateOfRegistrationForCollege = forwardRef(
     const isFirstYear = Number(yearlevel) === 1;
     const isFirstSemester = Number(activeSchoolYear[0]?.semester_id) === 1;
     const isFirstYearFirstSem = isFirstYear && isFirstSemester;
+    const [resolvedFeeLines, setResolvedFeeLines] = useState([]);
+    const [computedTuitionAmount, setComputedTuitionAmount] = useState(0);
+    const [computedTotalAssessment, setComputedTotalAssessment] = useState(0);
+    const shouldUseDynamicFees = resolvedFeeLines.length > 0;
+
+    useEffect(() => {
+      if (
+        !data[0] ||
+        !activeSchoolYear[0] ||
+        !currId ||
+        yearlevel === "" ||
+        yearlevel == null ||
+        totalLabFees == null ||
+        totalLecFees == null
+      ) {
+        setResolvedFeeLines([]);
+        setComputedTuitionAmount(0);
+        setComputedTotalAssessment(0);
+        return;
+      }
+
+      let cancelled = false;
+
+      const resolveStudentFees = async () => {
+        try {
+          const tuitionAmount = Number(totalLecFees || 0) + Number(totalLabFees || 0);
+          const result = await fetchResolvedFees({
+            tuitionAmount,
+            branchId: person?.campus || "",
+            curriculumId: currId,
+            yearLevelId: yearlevel,
+            hasNstp: isHaveNSTP !== 0,
+            nstpCount: isHaveNSTP,
+            hasComputer: isHaveComputerFees,
+            hasLaboratory: isHaveLaboratory,
+            firstYearFirstSem: isFirstYearFirstSem,
+          });
+
+          const tuition = computeTuitionAmount({
+            yearLevelId: yearlevel,
+            hasNstpSubject: isHaveNSTP !== 0,
+            totalLecFees,
+            totalLabFees,
+            resolvedFeeLines: result.feeLines,
+          });
+
+          if (cancelled) return;
+          setResolvedFeeLines(result.feeLines);
+          setComputedTuitionAmount(tuition);
+          setComputedTotalAssessment(
+            computeTotalAssessment(tuition, result.feeLines),
+          );
+        } catch (error) {
+          if (cancelled) return;
+          console.error("Error resolving assessed fees:", error);
+          setResolvedFeeLines([]);
+          setComputedTuitionAmount(0);
+          setComputedTotalAssessment(0);
+        }
+      };
+
+      resolveStudentFees();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [
+      data,
+      activeSchoolYear,
+      currId,
+      yearlevel,
+      totalLabFees,
+      totalLecFees,
+      person?.campus,
+      isHaveNSTP,
+      isHaveComputerFees,
+      isHaveLaboratory,
+      isFirstYearFirstSem,
+    ]);
 
     useEffect(() => {
       if (
@@ -2660,7 +2745,9 @@ const CertificateOfRegistrationForCollege = forwardRef(
                             <input
                               type="text"
                               value={
-                                Number(totalLecFees) + Number(totalLabFees)
+                                shouldUseDynamicFees
+                                  ? computedTuitionAmount
+                                  : Number(totalLecFees) + Number(totalLabFees)
                               }
                               readOnly
                               style={{
@@ -2678,7 +2765,71 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        {resolvedFeeLines.map((fee, index) => (
+                          <tr
+                            key={
+                              fee.fee_rate_id ||
+                              fee.fee_code ||
+                              `${fee.fee_name || "fee"}-${index}`
+                            }
+                          >
+                            <td
+                              colSpan={15}
+                              style={{
+                                fontSize: "62.5%",
+                                borderLeft: "1px solid black",
+                              }}
+                            >
+                              <input
+                                type="text"
+                                value={fee.fee_name || ""}
+                                readOnly
+                                style={{
+                                  color: "black",
+                                  width: "98%",
+                                  border: "none",
+                                  fontFamily: "Arial",
+                                  fontSize: "12px",
+                                  fontWeight: "bold",
+                                  outline: "none",
+                                  background: "none",
+                                }}
+                              />
+                            </td>
+                            <td
+                              colSpan={5}
+                              style={{
+                                fontSize: "62.5%",
+                                borderRight: "1px solid black",
+                              }}
+                            >
+                              <input
+                                type="text"
+                                value={toFeeNumber(fee.amount)}
+                                readOnly
+                                style={{
+                                  textAlign: "center",
+                                  fontFamily: "Arial",
+                                  fontSize: "12px",
+                                  fontWeight: "bold",
+                                  color: "black",
+                                  width: "98%",
+                                  border: "none",
+                                  outline: "none",
+                                  background: "none",
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2727,8 +2878,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                             />
                           </td>
                         </tr>
-
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2780,7 +2936,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2831,7 +2993,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2882,7 +3050,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2933,7 +3107,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -2984,7 +3164,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -3035,7 +3221,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -3086,7 +3278,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -3139,7 +3337,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -3194,7 +3398,13 @@ const CertificateOfRegistrationForCollege = forwardRef(
                           </td>
                         </tr>
 
-                        <tr>
+                        <tr
+                          style={{
+                            display: shouldUseDynamicFees
+                              ? "none"
+                              : "table-row",
+                          }}
+                        >
                           <td
                             colSpan={15}
                             style={{
@@ -3354,24 +3564,26 @@ const CertificateOfRegistrationForCollege = forwardRef(
                             <input
                               type="text"
                               value={
-                                totalLecFees +
-                                totalLabFees +
-                                Number(tosf[0]?.cultural_fee || 0) +
-                                Number(tosf[0]?.athletic_fee || 0) +
-                                (isHaveNSTP !== 0
-                                  ? Number(tosf[0]?.nstp_fees || 0)
-                                  : 0) +
-                                Number(tosf[0]?.developmental_fee || 0) +
-                                Number(tosf[0]?.guidance_fee || 0) +
-                                Number(tosf[0]?.library_fee || 0) +
-                                Number(tosf[0]?.medical_and_dental_fee || 0) +
-                                Number(tosf[0]?.registration_fee || 0) +
-                                (isHaveComputerFees !== 0
-                                  ? Number(tosf[0]?.computer_fees || 0)
-                                  : 0) +
-                                (isHaveLaboratory !== 0
-                                  ? Number(tosf[0]?.laboratory_fees || 0)
-                                  : 0)
+                                shouldUseDynamicFees
+                                  ? computedTotalAssessment
+                                  : totalLecFees +
+                                    totalLabFees +
+                                    Number(tosf[0]?.cultural_fee || 0) +
+                                    Number(tosf[0]?.athletic_fee || 0) +
+                                    (isHaveNSTP !== 0
+                                      ? Number(tosf[0]?.nstp_fees || 0)
+                                      : 0) +
+                                    Number(tosf[0]?.developmental_fee || 0) +
+                                    Number(tosf[0]?.guidance_fee || 0) +
+                                    Number(tosf[0]?.library_fee || 0) +
+                                    Number(tosf[0]?.medical_and_dental_fee || 0) +
+                                    Number(tosf[0]?.registration_fee || 0) +
+                                    (isHaveComputerFees !== 0
+                                      ? Number(tosf[0]?.computer_fees || 0)
+                                      : 0) +
+                                    (isHaveLaboratory !== 0
+                                      ? Number(tosf[0]?.laboratory_fees || 0)
+                                      : 0)
                               }
                               readOnly
                               style={{
